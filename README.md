@@ -4,6 +4,16 @@
 
 结构化渲染、分页、坐标高亮和 JSON 下载统一使用 `content_list_v2`，不依赖 `middle_json`。应用通过异步任务接口获取 ZIP 结果，再提取并持久化 `content_list_v2.json`。
 
+## 界面预览
+
+### 提交文件
+
+![提交文件页面](docs/assets/upload-page.png)
+
+### 解析结果
+
+![解析结果页面](docs/assets/result-page.png)
+
 ## 环境要求
 
 - Node.js 20 及以上版本
@@ -49,3 +59,7 @@ npm run lint
 ```bash
 npm start
 ```
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
