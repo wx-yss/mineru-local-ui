@@ -1,0 +1,43 @@
+{
+  "name": "mineru-local-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n WEB,SERVER -c cyan,green \"npm:dev:web\" \"npm:dev:server\"",
+    "dev:web": "vite",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:full": "concurrently -k -n MINERU,APP -c yellow,cyan \"npm:mineru-api\" \"npm:dev\"",
+    "mineru-api": "MINERU_MODEL_SOURCE=local MINERU_LOG_LEVEL=WARNING mineru-api --host 127.0.0.1 --port 8000 --enable-vlm-preload true",
+    "build": "tsc -b && vite build",
+    "start": "tsx server/index.ts",
+    "typecheck:server": "tsc -p tsconfig.server.json",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.14",
+    "express": "^5.2.1",
+    "fflate": "^0.8.3",
+    "katex": "^0.18.4",
+    "lucide-react": "^1.33.0",
+    "multer": "^2.2.0",
+    "pdfjs-dist": "^6.2.108",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/katex": "^0.16.8",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "concurrently": "^10.0.5",
+    "oxlint": "^1.75.0",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  }
+}
