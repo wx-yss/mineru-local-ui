@@ -1,5 +1,5 @@
 import DOMPurify from 'dompurify'
-import { Check, Clipboard, Download } from 'lucide-react'
+import { Check, Clipboard, Download, FileArchive } from 'lucide-react'
 import katex from 'katex'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 
@@ -243,6 +243,15 @@ export const StructuredPane = forwardRef<LinkedPaneHandle, StructuredPaneProps>(
           <button className="icon-button" title="复制 content_list_v2" onClick={() => void copyContentListV2()}>
             {copied ? <Check size={17} /> : <Clipboard size={17} />}
           </button>
+          <a
+            className="icon-button"
+            title="下载原始结果 ZIP"
+            aria-label="下载原始结果 ZIP"
+            href={`/api/documents/${documentId}/download/zip`}
+            download
+          >
+            <FileArchive size={17} />
+          </a>
           <a
             className="icon-button"
             title={tab === 'json' ? '下载 content_list_v2' : '下载 Markdown'}
