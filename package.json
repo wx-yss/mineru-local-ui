@@ -6,11 +6,11 @@
   "scripts": {
     "dev": "concurrently -k -n WEB,SERVER -c cyan,green \"npm:dev:web\" \"npm:dev:server\"",
     "dev:web": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "node --watch --env-file-if-exists=.env.local --import tsx server/index.ts",
     "dev:full": "concurrently -k -n MINERU,APP -c yellow,cyan \"npm:mineru-api\" \"npm:dev\"",
     "mineru-api": "MINERU_MODEL_SOURCE=local MINERU_LOG_LEVEL=WARNING mineru-api --host 127.0.0.1 --port 8000 --enable-vlm-preload true",
     "build": "tsc -b && vite build",
-    "start": "tsx server/index.ts",
+    "start": "node --env-file-if-exists=.env.local --import tsx server/index.ts",
     "typecheck:server": "tsc -p tsconfig.server.json",
     "lint": "oxlint",
     "preview": "vite preview"
