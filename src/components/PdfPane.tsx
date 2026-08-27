@@ -153,7 +153,10 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
   useEffect(() => {
     if (mimeType !== 'application/pdf') return
     let cancelled = false
-    const loadingTask = pdfjs.getDocument({ url: sourceUrl })
+    const loadingTask = pdfjs.getDocument({
+      url: sourceUrl,
+      wasmUrl: `${import.meta.env.BASE_URL}pdfjs-wasm/`,
+    })
     void loadingTask.promise
       .then((loadedDocument) => {
         if (!cancelled) {
