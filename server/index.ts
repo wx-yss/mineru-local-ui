@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import express from 'express'
 import type { NextFunction, Request, Response } from 'express'
-import { strFromU8, unzipSync } from 'fflate'
+import { strFromU8, unzipSync, zipSync } from 'fflate'
 import multer from 'multer'
 
 type DocumentStatus =
@@ -71,6 +71,9 @@ const supportedExtensions = new Set([
   '.xlsx',
 ])
 
+const importedFileLimit = 2000
+const importedArchiveExtensions = new Set(['.zip'])
+
 await fsp.mkdir(uploadRoot, { recursive: true })
 
 const upload = multer({
@@ -80,6 +83,11 @@ const upload = multer({
     const extension = path.extname(file.originalname).toLowerCase()
     callback(null, supportedExtensions.has(extension))
   },
+})
+
+const importUpload = multer({
+  dest: uploadRoot,
+  limits: { fileSize: 500 * 1024 * 1024, files: importedFileLimit },
 })
 
 const app = express()
@@ -221,6 +229,75 @@ function imageMimeType(filename: string) {
   if (extension === '.svg') return 'image/svg+xml'
   if (['.tif', '.tiff'].includes(extension)) return 'image/tiff'
   return 'application/octet-stream'
+}
+
+interface ImportedResult {
+  sourceFilename: string
+  sourceBytes: Uint8Array
+  result: unknown
+}
+
+function normalizeArchivePath(filename: string) {
+  return decodeUploadFilename(filename).replaceAll('\\', '/').replace(/^\.\//, '')
+}
+
+function basenameWithoutResultSuffix(filename: string) {
+  return path.posix.basename(filename).replace(/_content_list_v2\.json$/i, '')
+}
+
+function selectImportedPdf(entries: [string, Uint8Array][], v2Filename: string) {
+  const pdfEntries = entries.filter(([filename]) => filename.toLowerCase().endsWith('.pdf'))
+  if (pdfEntries.length === 0) throw new Error('导入结果缺少原始 PDF 文件')
+  if (pdfEntries.length === 1) return pdfEntries[0]
+
+  const resultName = basenameWithoutResultSuffix(v2Filename).toLowerCase()
+  const matchedEntries = pdfEntries.filter(([filename]) => path.posix.parse(filename).name.toLowerCase() === resultName)
+  if (matchedEntries.length === 1) return matchedEntries[0]
+  throw new Error('导入结果包含多个 PDF，无法确定与 OCR 结果对应的文件')
+}
+
+function buildImportedResult(files: Record<string, Uint8Array>, backend = 'imported'): ImportedResult {
+  const entries = Object.entries(files)
+    .map(([filename, content]) => [normalizeArchivePath(filename), content] as [string, Uint8Array])
+    .filter(([filename]) => filename && !filename.endsWith('/'))
+  const v2Entries = entries.filter(([filename]) => filename.toLowerCase().endsWith('_content_list_v2.json'))
+  if (v2Entries.length === 0) throw new Error('导入结果缺少 _content_list_v2.json')
+  if (v2Entries.length > 1) throw new Error('导入结果包含多个 content_list_v2，当前仅支持一次导入一个文档')
+
+  const v2Entry = v2Entries[0]
+  const pdfEntry = selectImportedPdf(entries, v2Entry[0])
+  const resultDirectory = path.posix.dirname(v2Entry[0])
+  const resultName = basenameWithoutResultSuffix(v2Entry[0])
+  const relatedEntries = entries.filter(([filename]) => path.posix.dirname(filename) === resultDirectory)
+  const markdownEntry = relatedEntries.find(([filename]) => filename.toLowerCase().endsWith('.md'))
+  const middleJsonEntry = relatedEntries.find(([filename]) => filename.toLowerCase().endsWith('_middle.json'))
+  const modelOutputEntry = relatedEntries.find(([filename]) => filename.toLowerCase().endsWith('_model.json'))
+  const imageDirectory = resultDirectory === '.' ? 'images/' : `${resultDirectory}/images/`
+  const images = Object.fromEntries(
+    entries
+      .filter(([filename]) => filename.startsWith(imageDirectory) && imageMimeType(filename).startsWith('image/'))
+      .map(([filename, content]) => [
+        path.posix.basename(filename),
+        `data:${imageMimeType(filename)};base64,${Buffer.from(content).toString('base64')}`,
+      ]),
+  )
+
+  return {
+    sourceFilename: path.posix.basename(pdfEntry[0]),
+    sourceBytes: pdfEntry[1],
+    result: {
+      backend,
+      results: {
+        [resultName]: {
+          content_list_v2: strFromU8(v2Entry[1]),
+          md_content: markdownEntry ? strFromU8(markdownEntry[1]) : '',
+          ...(middleJsonEntry ? { middle_json: strFromU8(middleJsonEntry[1]) } : {}),
+          ...(modelOutputEntry ? { model_output: strFromU8(modelOutputEntry[1]) } : {}),
+          images,
+        },
+      },
+    },
+  }
 }
 
 function buildResultFromZip(bytes: Uint8Array, meta: DocumentMeta) {
@@ -419,6 +496,69 @@ app.post('/api/documents', upload.single('file'), async (request, response, next
     meta.error = error instanceof Error ? error.message : '任务提交失败'
     await saveDocumentMeta(meta).catch(() => undefined)
     next(error)
+  }
+})
+
+app.post('/api/imports', importUpload.array('files', importedFileLimit), async (request, response, next) => {
+  const uploadedFiles = request.files as Express.Multer.File[] | undefined
+  if (!uploadedFiles?.length) {
+    response.status(400).json({ error: '请选择 MinerU 结果 ZIP 或结果目录' })
+    return
+  }
+
+  const id = crypto.randomUUID()
+  const directory = documentDirectory(id)
+
+  try {
+    let archiveFiles: Record<string, Uint8Array>
+    let resultZipBytes: Uint8Array
+    const archiveFile = uploadedFiles.length === 1 && importedArchiveExtensions.has(path.extname(uploadedFiles[0].originalname).toLowerCase())
+      ? uploadedFiles[0]
+      : null
+
+    if (archiveFile) {
+      resultZipBytes = new Uint8Array(await fsp.readFile(archiveFile.path))
+      archiveFiles = unzipSync(resultZipBytes)
+    } else {
+      const rawPaths = request.body.paths
+      const relativePaths = typeof rawPaths === 'string' ? JSON.parse(rawPaths) as unknown : null
+      if (!Array.isArray(relativePaths) || relativePaths.length !== uploadedFiles.length) {
+        throw new Error('结果目录的文件路径信息不完整')
+      }
+      archiveFiles = Object.fromEntries(await Promise.all(uploadedFiles.map(async (file, index) => {
+        const relativePath = normalizeArchivePath(String(relativePaths[index] || file.originalname))
+        return [relativePath, new Uint8Array(await fsp.readFile(file.path))]
+      })))
+      resultZipBytes = zipSync(archiveFiles)
+    }
+
+    const imported = buildImportedResult(archiveFiles)
+    const now = new Date().toISOString()
+    const sourceFilename = 'source.pdf'
+    const meta: DocumentMeta = {
+      id,
+      name: imported.sourceFilename,
+      size: imported.sourceBytes.byteLength,
+      mimeType: 'application/pdf',
+      sourceFilename,
+      createdAt: now,
+      updatedAt: now,
+      status: 'completed',
+      options: parseOptions({}),
+      pageCount: inferPageCount(imported.result),
+    }
+
+    await fsp.mkdir(directory, { recursive: true })
+    await writeBytesAtomic(path.join(directory, sourceFilename), imported.sourceBytes)
+    await writeBytesAtomic(resultZipPath(id), resultZipBytes)
+    await writeJsonAtomic(resultPath(id), imported.result)
+    await saveDocumentMeta(meta)
+    response.status(201).json(meta)
+  } catch (error) {
+    await fsp.rm(directory, { recursive: true, force: true }).catch(() => undefined)
+    next(error)
+  } finally {
+    await Promise.all(uploadedFiles.map((file) => fsp.rm(file.path, { force: true })))
   }
 })
 

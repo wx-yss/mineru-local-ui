@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, FileUp, LoaderCircle, Settings2, UploadCloud, X } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileArchive, FileUp, FolderOpen, LoaderCircle, Settings2, UploadCloud, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { formatFileSize } from '../lib/mineru'
@@ -9,6 +9,7 @@ interface UploadViewProps {
   uploading: boolean
   error: string | null
   onUpload: (file: File, options: ParseOptions) => Promise<void>
+  onImport: (files: File[]) => Promise<void>
 }
 
 const defaultOptions: ParseOptions = {
@@ -61,9 +62,14 @@ export function UploadView({
   uploading,
   error,
   onUpload,
+  onImport,
 }: UploadViewProps) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const zipInputRef = useRef<HTMLInputElement>(null)
+  const directoryInputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
+  const [importFiles, setImportFiles] = useState<File[]>([])
+  const [mode, setMode] = useState<'parse' | 'import'>('parse')
   const [dragging, setDragging] = useState(false)
   const [commonOpen, setCommonOpen] = useState(true)
   const [otherOpen, setOtherOpen] = useState(false)
@@ -77,6 +83,10 @@ export function UploadView({
     }
   }, [options])
 
+  useEffect(() => {
+    directoryInputRef.current?.setAttribute('webkitdirectory', '')
+  }, [])
+
   function chooseFile(nextFile: File | undefined) {
     if (nextFile) setFile(nextFile)
   }
@@ -85,6 +95,20 @@ export function UploadView({
     if (!file || uploading) return
     await onUpload(file, options)
   }
+
+  async function submitImport() {
+    if (importFiles.length === 0 || uploading) return
+    await onImport(importFiles)
+  }
+
+  function selectImportFiles(files: FileList | null) {
+    if (files?.length) setImportFiles(Array.from(files))
+  }
+
+  const importLabel = importFiles.length === 1
+    ? importFiles[0].name
+    : `${importFiles[0]?.webkitRelativePath.split('/')[0] || '结果目录'}（${importFiles.length} 个文件）`
+  const importSize = importFiles.reduce((total, current) => total + current.size, 0)
 
   return (
     <main className="upload-view">
@@ -100,21 +124,27 @@ export function UploadView({
         </div>
       </header>
 
-      <section className="upload-workspace">
-        <div
-          className={`dropzone ${dragging ? 'dragging' : ''} ${file ? 'has-file' : ''}`}
-          onDragEnter={(event) => {
-            event.preventDefault()
-            setDragging(true)
-          }}
-          onDragOver={(event) => event.preventDefault()}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault()
-            setDragging(false)
-            chooseFile(event.dataTransfer.files[0])
-          }}
-        >
+      <div className="workspace-mode" aria-label="工作模式">
+        <button className={mode === 'parse' ? 'active' : ''} onClick={() => setMode('parse')}>新建解析</button>
+        <button className={mode === 'import' ? 'active' : ''} onClick={() => setMode('import')}>导入结果</button>
+      </div>
+
+      <section className={`upload-workspace ${mode === 'import' ? 'import-workspace' : ''}`}>
+        {mode === 'parse' ? (
+          <div
+            className={`dropzone ${dragging ? 'dragging' : ''} ${file ? 'has-file' : ''}`}
+            onDragEnter={(event) => {
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event) => {
+              event.preventDefault()
+              setDragging(false)
+              chooseFile(event.dataTransfer.files[0])
+            }}
+          >
           <input
             ref={inputRef}
             type="file"
@@ -160,10 +190,66 @@ export function UploadView({
 
           {error && <div className="inline-error">{error}</div>}
           {!health?.available && <div className="inline-warning">请先启动本地 MinerU API</div>}
-        </div>
+          </div>
+        ) : (
+          <div className="dropzone import-dropzone">
+            <input
+              ref={zipInputRef}
+              type="file"
+              hidden
+              accept=".zip,application/zip"
+              onChange={(event) => selectImportFiles(event.target.files)}
+            />
+            <input
+              ref={directoryInputRef}
+              type="file"
+              hidden
+              multiple
+              onChange={(event) => selectImportFiles(event.target.files)}
+            />
 
-        <aside className="settings-panel">
-          <div className="settings-title"><span><Settings2 size={17} />解析设置</span></div>
+            {importFiles.length > 0 ? (
+              <div className="selected-import">
+                <div className="selected-file">
+                  <span className="selected-file-icon"><FileArchive size={26} /></span>
+                  <div>
+                    <strong title={importLabel}>{importLabel}</strong>
+                    <span>{formatFileSize(importSize)}</span>
+                  </div>
+                  <button className="icon-button" title="移除结果" onClick={() => setImportFiles([])}>
+                    <X size={18} />
+                  </button>
+                </div>
+                <div className="upload-actions">
+                  <button className="secondary-button" onClick={() => setImportFiles([])} disabled={uploading}>重新选择</button>
+                  <button className="primary-button" onClick={() => void submitImport()} disabled={uploading}>
+                    {uploading ? <LoaderCircle size={17} className="spin" /> : <FileArchive size={17} />}
+                    {uploading ? '正在导入' : '打开预览'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="dropzone-empty">
+                <span className="upload-glyph"><FileArchive size={34} /></span>
+                <strong>导入已有 MinerU 结果</strong>
+                <span>结果中需包含原始 PDF 和 content_list_v2.json</span>
+                <div className="import-choice-actions">
+                  <button className="secondary-button" onClick={() => zipInputRef.current?.click()}>
+                    <FileArchive size={17} />选择 ZIP
+                  </button>
+                  <button className="secondary-button" onClick={() => directoryInputRef.current?.click()}>
+                    <FolderOpen size={17} />选择目录
+                  </button>
+                </div>
+              </div>
+            )}
+            {error && <div className="inline-error">{error}</div>}
+          </div>
+        )}
+
+        {mode === 'parse' && (
+          <aside className="settings-panel">
+            <div className="settings-title"><span><Settings2 size={17} />解析设置</span></div>
 
           <section className="settings-group">
             <button className="settings-group-heading" onClick={() => setCommonOpen((current) => !current)}>
@@ -345,7 +431,8 @@ export function UploadView({
               </div>
             )}
           </section>
-        </aside>
+          </aside>
+        )}
       </section>
     </main>
   )

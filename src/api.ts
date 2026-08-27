@@ -40,6 +40,13 @@ export async function uploadDocument(file: File, options: ParseOptions) {
   return request<DocumentMeta>('/api/documents', { method: 'POST', body: form })
 }
 
+export async function importResult(files: File[]) {
+  const form = new FormData()
+  files.forEach((file) => form.append('files', file))
+  form.append('paths', JSON.stringify(files.map((file) => file.webkitRelativePath || file.name)))
+  return request<DocumentMeta>('/api/imports', { method: 'POST', body: form })
+}
+
 export function retryDocument(id: string, options: ParseOptions) {
   return request<DocumentMeta>(`/api/documents/${id}/retry`, {
     method: 'POST',
