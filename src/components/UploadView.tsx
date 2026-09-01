@@ -83,10 +83,6 @@ export function UploadView({
     }
   }, [options])
 
-  useEffect(() => {
-    directoryInputRef.current?.setAttribute('webkitdirectory', '')
-  }, [])
-
   function chooseFile(nextFile: File | undefined) {
     if (nextFile) setFile(nextFile)
   }
@@ -201,10 +197,14 @@ export function UploadView({
               onChange={(event) => selectImportFiles(event.target.files)}
             />
             <input
-              ref={directoryInputRef}
+              ref={(element) => {
+                directoryInputRef.current = element
+                if (element) element.webkitdirectory = true
+              }}
               type="file"
               hidden
               multiple
+              {...{ webkitdirectory: '', directory: '' }}
               onChange={(event) => selectImportFiles(event.target.files)}
             />
 
@@ -232,7 +232,7 @@ export function UploadView({
               <div className="dropzone-empty">
                 <span className="upload-glyph"><FileArchive size={34} /></span>
                 <strong>导入已有 MinerU 结果</strong>
-                <span>结果中需包含原始 PDF 和 content_list_v2.json</span>
+                <span>选择包含 PDF 和预处理产物的目录</span>
                 <div className="import-choice-actions">
                   <button className="secondary-button" onClick={() => zipInputRef.current?.click()}>
                     <FileArchive size={17} />选择 ZIP

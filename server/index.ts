@@ -242,7 +242,25 @@ function normalizeArchivePath(filename: string) {
 }
 
 function basenameWithoutResultSuffix(filename: string) {
-  return path.posix.basename(filename).replace(/_content_list_v2\.json$/i, '')
+  const basename = path.posix.basename(filename)
+  if (basename.toLowerCase() === 'content_list_v2.json') return ''
+  return basename.replace(/_content_list_v2\.json$/i, '')
+}
+
+function isContentListV2Filename(filename: string) {
+  const basename = path.posix.basename(filename).toLowerCase()
+  return basename === 'content_list_v2.json' || basename.endsWith('_content_list_v2.json')
+}
+
+function findContentListEntry(entries: [string, Uint8Array][]) {
+  const v2Entries = entries.filter(([filename]) => isContentListV2Filename(filename))
+  if (v2Entries.length === 0) {
+    throw new Error('导入结果缺少 content_list_v2.json 或 *_content_list_v2.json')
+  }
+  if (v2Entries.length > 1) {
+    throw new Error('导入结果包含多个 content_list_v2，当前仅支持一次导入一个文档')
+  }
+  return v2Entries[0]
 }
 
 function selectImportedPdf(entries: [string, Uint8Array][], v2Filename: string) {
@@ -260,14 +278,10 @@ function buildImportedResult(files: Record<string, Uint8Array>, backend = 'impor
   const entries = Object.entries(files)
     .map(([filename, content]) => [normalizeArchivePath(filename), content] as [string, Uint8Array])
     .filter(([filename]) => filename && !filename.endsWith('/'))
-  const v2Entries = entries.filter(([filename]) => filename.toLowerCase().endsWith('_content_list_v2.json'))
-  if (v2Entries.length === 0) throw new Error('导入结果缺少 _content_list_v2.json')
-  if (v2Entries.length > 1) throw new Error('导入结果包含多个 content_list_v2，当前仅支持一次导入一个文档')
-
-  const v2Entry = v2Entries[0]
+  const v2Entry = findContentListEntry(entries)
   const pdfEntry = selectImportedPdf(entries, v2Entry[0])
   const resultDirectory = path.posix.dirname(v2Entry[0])
-  const resultName = basenameWithoutResultSuffix(v2Entry[0])
+  const resultName = path.posix.parse(pdfEntry[0]).name
   const relatedEntries = entries.filter(([filename]) => path.posix.dirname(filename) === resultDirectory)
   const markdownEntry = relatedEntries.find(([filename]) => filename.toLowerCase().endsWith('.md'))
   const middleJsonEntry = relatedEntries.find(([filename]) => filename.toLowerCase().endsWith('_middle.json'))
@@ -303,12 +317,11 @@ function buildImportedResult(files: Record<string, Uint8Array>, backend = 'impor
 function buildResultFromZip(bytes: Uint8Array, meta: DocumentMeta) {
   const files = unzipSync(bytes)
   const entries = Object.entries(files)
-  const v2Entry = entries.find(([filename]) => filename.endsWith('_content_list_v2.json'))
-  if (!v2Entry) throw new Error('MinerU ZIP 结果缺少 content_list_v2.json')
+  const v2Entry = findContentListEntry(entries)
 
-  const markdownEntry = entries.find(([filename]) => filename.endsWith('.md'))
-  const middleJsonEntry = entries.find(([filename]) => filename.endsWith('_middle.json'))
-  const modelOutputEntry = entries.find(([filename]) => filename.endsWith('_model.json'))
+  const markdownEntry = entries.find(([filename]) => filename.toLowerCase().endsWith('.md'))
+  const middleJsonEntry = entries.find(([filename]) => filename.toLowerCase().endsWith('_middle.json'))
+  const modelOutputEntry = entries.find(([filename]) => filename.toLowerCase().endsWith('_model.json'))
   const images = Object.fromEntries(
     entries
       .filter(([filename]) => filename.includes('/images/') && imageMimeType(filename).startsWith('image/'))

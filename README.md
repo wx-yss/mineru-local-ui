@@ -46,7 +46,7 @@ npm run dev
 
 解析设置分为默认展开的“常用设置”和默认折叠的“其他设置”。浏览器会记住上一次选择，新解析继续使用该配置；首次使用时解析强度默认为 High。OCR 语言仅在 Pipeline 后端显示并提交，其他后端不需要填写。ZIP 与 Content list v2 是必选输出；Markdown 和 Image 默认开启并可调整；Middle JSON、Model output 和 Original file 默认关闭。解析范围固定为全部页面，完成后可下载原始结果 ZIP。
 
-已有 MinerU 识别结果无需重新发起任务。在首页切换到“导入结果”，可选择结果 ZIP，或选择该 ZIP 解压后的目录；结果中需同时包含原始 PDF 和 `_content_list_v2.json`，Markdown、图片、Middle JSON 和 Model output 可选。导入完成后会直接进入 PDF 与 OCR 内容联动预览，MinerU API 离线时也可使用。
+已有 MinerU 识别结果无需重新发起任务。在首页切换到“导入结果”，可选择结果 ZIP，或选择该 ZIP 解压后的目录；目录中需包含原始 PDF，以及标准命名的 `_content_list_v2.json`，或位于预处理产物目录中的 `content_list_v2.json`。同目录下的 Markdown（包括 `full.md`）和 `images/` 图片会一并导入，Middle JSON 和 Model output 可选。导入完成后会直接进入 PDF 与 OCR 内容联动预览，MinerU API 离线时也可使用。
 
 ## 验证与构建
 
