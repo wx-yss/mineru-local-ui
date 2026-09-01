@@ -58,6 +58,7 @@ export function DocumentViewer({ document, onRetry }: DocumentViewerProps) {
       ) : (
         <div className="linked-viewer">
           <PdfPane
+            key={document.id}
             ref={pdfRef}
             sourceUrl={`/api/documents/${document.id}/source`}
             mimeType={document.mimeType}

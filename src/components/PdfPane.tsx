@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Minus, Plus } from 'lucide-react'
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -35,6 +36,21 @@ interface PageCanvasProps {
   blocks: LinkedBlock[]
   activeBlockId: string | null
   onSelectBlock: (id: string) => void
+  onError: (message: string) => void
+}
+
+interface LoadedPdf {
+  sourceUrl: string
+  document: PDFDocumentProxy
+}
+
+interface PdfError {
+  sourceUrl: string
+  message: string
+}
+
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback
 }
 
 function PageCanvas({
@@ -45,6 +61,7 @@ function PageCanvas({
   blocks,
   activeBlockId,
   onSelectBlock,
+  onError,
 }: PageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null)
@@ -53,13 +70,18 @@ function PageCanvas({
 
   useEffect(() => {
     let cancelled = false
-    void document.getPage(pageNumber).then((loadedPage) => {
-      if (!cancelled) setPage(loadedPage)
-    })
+    void (async () => {
+      try {
+        const loadedPage = await document.getPage(pageNumber)
+        if (!cancelled) setPage(loadedPage)
+      } catch (loadError) {
+        if (!cancelled) onError(getErrorMessage(loadError, `PDF 第 ${pageNumber} 页加载失败`))
+      }
+    })()
     return () => {
       cancelled = true
     }
-  }, [document, pageNumber])
+  }, [document, onError, pageNumber])
 
   useEffect(() => {
     if (!page || !canvasRef.current || availableWidth <= 0) return
@@ -78,19 +100,30 @@ function PageCanvas({
     canvas.style.height = `${viewport.height}px`
     setDimensions({ width: viewport.width, height: viewport.height })
 
-    const renderTask = page.render({
-      canvas,
-      canvasContext: context,
-      viewport,
-      transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
-    })
+    let cancelled = false
+    let renderTask
+    try {
+      renderTask = page.render({
+        canvas,
+        canvasContext: context,
+        viewport,
+        transform: pixelRatio === 1 ? undefined : [pixelRatio, 0, 0, pixelRatio, 0, 0],
+      })
+    } catch (renderError) {
+      onError(getErrorMessage(renderError, `PDF 第 ${pageNumber} 页渲染失败`))
+      return
+    }
     renderTaskRef.current = renderTask
     void renderTask.promise.catch((error: unknown) => {
-      if (!(error instanceof Error) || error.name !== 'RenderingCancelledException') throw error
+      if (cancelled || (error instanceof Error && error.name === 'RenderingCancelledException')) return
+      onError(getErrorMessage(error, `PDF 第 ${pageNumber} 页渲染失败`))
     })
 
-    return () => renderTask.cancel()
-  }, [availableWidth, page, zoom])
+    return () => {
+      cancelled = true
+      renderTask.cancel()
+    }
+  }, [availableWidth, onError, page, pageNumber, zoom])
 
   return (
     <div
@@ -130,11 +163,14 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const scrollFrame = useRef<number | null>(null)
-  const [document, setDocument] = useState<PDFDocumentProxy | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [loadedPdf, setLoadedPdf] = useState<LoadedPdf | null>(null)
+  const [pdfError, setPdfError] = useState<PdfError | null>(null)
   const [width, setWidth] = useState(0)
   const [zoom, setZoom] = useState(1)
   const [currentPage, setCurrentPage] = useState(1)
+  const reportError = useCallback((message: string) => {
+    setPdfError({ sourceUrl, message })
+  }, [sourceUrl])
 
   useImperativeHandle(ref, () => ({
     scrollToBlock(id) {
@@ -160,18 +196,25 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
     void loadingTask.promise
       .then((loadedDocument) => {
         if (!cancelled) {
-          setDocument(loadedDocument)
-          setError(null)
+          setLoadedPdf({ sourceUrl, document: loadedDocument })
+          setPdfError(null)
         }
       })
       .catch((loadError: unknown) => {
-        if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'PDF 加载失败')
+        if (!cancelled) {
+          setPdfError({ sourceUrl, message: getErrorMessage(loadError, 'PDF 加载失败') })
+        }
       })
     return () => {
       cancelled = true
-      void loadingTask.destroy()
+      void loadingTask.destroy().catch(() => undefined)
     }
   }, [mimeType, sourceUrl])
+
+  const document = mimeType === 'application/pdf' && loadedPdf?.sourceUrl === sourceUrl
+    ? loadedPdf.document
+    : null
+  const error = pdfError?.sourceUrl === sourceUrl ? pdfError.message : null
 
   function inspectScroll() {
     const container = containerRef.current
@@ -260,6 +303,7 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
               blocks={pageBlocks.get(index) ?? []}
               activeBlockId={activeBlockId}
               onSelectBlock={onVisibleBlock}
+              onError={reportError}
             />
           ))
         )}
