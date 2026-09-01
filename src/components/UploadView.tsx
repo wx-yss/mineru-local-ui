@@ -10,6 +10,7 @@ interface UploadViewProps {
   error: string | null
   onUpload: (file: File, options: ParseOptions) => Promise<void>
   onImport: (files: File[]) => Promise<void>
+  onImportPath: (path: string) => Promise<void>
 }
 
 const defaultOptions: ParseOptions = {
@@ -63,12 +64,14 @@ export function UploadView({
   error,
   onUpload,
   onImport,
+  onImportPath,
 }: UploadViewProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   const zipInputRef = useRef<HTMLInputElement>(null)
   const directoryInputRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
   const [importFiles, setImportFiles] = useState<File[]>([])
+  const [importPath, setImportPath] = useState('')
   const [mode, setMode] = useState<'parse' | 'import'>('parse')
   const [dragging, setDragging] = useState(false)
   const [commonOpen, setCommonOpen] = useState(true)
@@ -95,6 +98,12 @@ export function UploadView({
   async function submitImport() {
     if (importFiles.length === 0 || uploading) return
     await onImport(importFiles)
+  }
+
+  async function submitImportPath() {
+    const path = importPath.trim()
+    if (!path || uploading) return
+    await onImportPath(path)
   }
 
   function selectImportFiles(files: FileList | null) {
@@ -241,6 +250,29 @@ export function UploadView({
                     <FolderOpen size={17} />选择目录
                   </button>
                 </div>
+                <form
+                  className="import-path-form"
+                  onSubmit={(event) => {
+                    event.preventDefault()
+                    void submitImportPath()
+                  }}
+                >
+                  <span className="import-path-divider">或输入本机路径</span>
+                  <div className="import-path-control">
+                    <input
+                      type="text"
+                      aria-label="结果目录或 ZIP 的本机路径"
+                      placeholder="/Users/用户名/Documents/结果目录"
+                      value={importPath}
+                      disabled={uploading}
+                      onChange={(event) => setImportPath(event.target.value)}
+                    />
+                    <button className="primary-button" type="submit" disabled={uploading || !importPath.trim()}>
+                      {uploading ? <LoaderCircle size={17} className="spin" /> : <FolderOpen size={17} />}
+                      {uploading ? '正在导入' : '导入路径'}
+                    </button>
+                  </div>
+                </form>
               </div>
             )}
             {error && <div className="inline-error">{error}</div>}

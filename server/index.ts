@@ -72,6 +72,8 @@ const supportedExtensions = new Set([
 ])
 
 const importedFileLimit = 2000
+const importedFileSizeLimit = 500 * 1024 * 1024
+const importedTotalSizeLimit = 1024 * 1024 * 1024
 const importedArchiveExtensions = new Set(['.zip'])
 
 await fsp.mkdir(uploadRoot, { recursive: true })
@@ -87,7 +89,7 @@ const upload = multer({
 
 const importUpload = multer({
   dest: uploadRoot,
-  limits: { fileSize: 500 * 1024 * 1024, files: importedFileLimit },
+  limits: { fileSize: importedFileSizeLimit, files: importedFileLimit },
 })
 
 const app = express()
@@ -237,6 +239,11 @@ interface ImportedResult {
   result: unknown
 }
 
+interface ImportedArchive {
+  archiveFiles: Record<string, Uint8Array>
+  resultZipBytes: Uint8Array
+}
+
 function normalizeArchivePath(filename: string) {
   return decodeUploadFilename(filename).replaceAll('\\', '/').replace(/^\.\//, '')
 }
@@ -312,6 +319,125 @@ function buildImportedResult(files: Record<string, Uint8Array>, backend = 'impor
       },
     },
   }
+}
+
+async function saveImportedArchive({ archiveFiles, resultZipBytes }: ImportedArchive) {
+  const imported = buildImportedResult(archiveFiles)
+  const id = crypto.randomUUID()
+  const directory = documentDirectory(id)
+  const now = new Date().toISOString()
+  const sourceFilename = 'source.pdf'
+  const meta: DocumentMeta = {
+    id,
+    name: imported.sourceFilename,
+    size: imported.sourceBytes.byteLength,
+    mimeType: 'application/pdf',
+    sourceFilename,
+    createdAt: now,
+    updatedAt: now,
+    status: 'completed',
+    options: parseOptions({}),
+    pageCount: inferPageCount(imported.result),
+  }
+
+  try {
+    await fsp.mkdir(directory, { recursive: true })
+    await writeBytesAtomic(path.join(directory, sourceFilename), imported.sourceBytes)
+    await writeBytesAtomic(resultZipPath(id), resultZipBytes)
+    await writeJsonAtomic(resultPath(id), imported.result)
+    await saveDocumentMeta(meta)
+    return meta
+  } catch (error) {
+    await fsp.rm(directory, { recursive: true, force: true }).catch(() => undefined)
+    throw error
+  }
+}
+
+async function buildUploadedImportArchive(
+  uploadedFiles: Express.Multer.File[],
+  rawPaths: unknown,
+): Promise<ImportedArchive> {
+  const archiveFile = uploadedFiles.length === 1
+    && importedArchiveExtensions.has(path.extname(uploadedFiles[0].originalname).toLowerCase())
+    ? uploadedFiles[0]
+    : null
+
+  if (archiveFile) {
+    const resultZipBytes = new Uint8Array(await fsp.readFile(archiveFile.path))
+    return { archiveFiles: unzipSync(resultZipBytes), resultZipBytes }
+  }
+
+  const relativePaths = typeof rawPaths === 'string' ? JSON.parse(rawPaths) as unknown : null
+  if (!Array.isArray(relativePaths) || relativePaths.length !== uploadedFiles.length) {
+    throw new Error('结果目录的文件路径信息不完整')
+  }
+  const archiveFiles = Object.fromEntries(await Promise.all(uploadedFiles.map(async (file, index) => {
+    const relativePath = normalizeArchivePath(String(relativePaths[index] || file.originalname))
+    return [relativePath, new Uint8Array(await fsp.readFile(file.path))]
+  })))
+  return { archiveFiles, resultZipBytes: zipSync(archiveFiles) }
+}
+
+function normalizeLocalImportPath(value: string) {
+  const trimmed = value.trim()
+  const hasMatchingQuotes = trimmed.length >= 2
+    && ((trimmed.startsWith('"') && trimmed.endsWith('"'))
+      || (trimmed.startsWith("'") && trimmed.endsWith("'")))
+  return hasMatchingQuotes ? trimmed.slice(1, -1).trim() : trimmed
+}
+
+async function buildLocalImportArchive(value: string): Promise<ImportedArchive> {
+  const requestedPath = normalizeLocalImportPath(value)
+  if (!requestedPath) throw new Error('请输入结果目录或 ZIP 的本机路径')
+  if (!path.isAbsolute(requestedPath)) throw new Error('请输入以 / 开头的绝对路径')
+
+  let resolvedPath: string
+  try {
+    resolvedPath = await fsp.realpath(requestedPath)
+  } catch {
+    throw new Error(`路径不存在或无法访问：${requestedPath}`)
+  }
+  const stats = await fsp.stat(resolvedPath)
+
+  if (stats.isFile()) {
+    if (!importedArchiveExtensions.has(path.extname(resolvedPath).toLowerCase())) {
+      throw new Error('文件路径仅支持 ZIP，导入普通结果请填写目录路径')
+    }
+    if (stats.size > importedFileSizeLimit) throw new Error('ZIP 文件不能超过 500 MB')
+    const resultZipBytes = new Uint8Array(await fsp.readFile(resolvedPath))
+    return { archiveFiles: unzipSync(resultZipBytes), resultZipBytes }
+  }
+  if (!stats.isDirectory()) throw new Error('路径必须指向结果目录或 ZIP 文件')
+
+  const archiveFiles: Record<string, Uint8Array> = {}
+  let fileCount = 0
+  let totalSize = 0
+
+  async function collectFiles(directory: string) {
+    const entries = await fsp.readdir(directory, { withFileTypes: true })
+    entries.sort((left, right) => left.name.localeCompare(right.name))
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        await collectFiles(entryPath)
+        continue
+      }
+      if (!entry.isFile()) continue
+
+      fileCount += 1
+      if (fileCount > importedFileLimit) throw new Error(`结果目录文件数不能超过 ${importedFileLimit}`)
+      const entryStats = await fsp.stat(entryPath)
+      if (entryStats.size > importedFileSizeLimit) throw new Error(`文件不能超过 500 MB：${entry.name}`)
+      totalSize += entryStats.size
+      if (totalSize > importedTotalSizeLimit) throw new Error('结果目录文件总量不能超过 1 GB')
+      const relativePath = path.relative(resolvedPath, entryPath).split(path.sep).join('/')
+      archiveFiles[relativePath] = new Uint8Array(await fsp.readFile(entryPath))
+    }
+  }
+
+  await collectFiles(resolvedPath)
+  if (fileCount === 0) throw new Error('结果目录中没有文件')
+  return { archiveFiles, resultZipBytes: zipSync(archiveFiles) }
 }
 
 function buildResultFromZip(bytes: Uint8Array, meta: DocumentMeta) {
@@ -519,59 +645,30 @@ app.post('/api/imports', importUpload.array('files', importedFileLimit), async (
     return
   }
 
-  const id = crypto.randomUUID()
-  const directory = documentDirectory(id)
-
   try {
-    let archiveFiles: Record<string, Uint8Array>
-    let resultZipBytes: Uint8Array
-    const archiveFile = uploadedFiles.length === 1 && importedArchiveExtensions.has(path.extname(uploadedFiles[0].originalname).toLowerCase())
-      ? uploadedFiles[0]
-      : null
-
-    if (archiveFile) {
-      resultZipBytes = new Uint8Array(await fsp.readFile(archiveFile.path))
-      archiveFiles = unzipSync(resultZipBytes)
-    } else {
-      const rawPaths = request.body.paths
-      const relativePaths = typeof rawPaths === 'string' ? JSON.parse(rawPaths) as unknown : null
-      if (!Array.isArray(relativePaths) || relativePaths.length !== uploadedFiles.length) {
-        throw new Error('结果目录的文件路径信息不完整')
-      }
-      archiveFiles = Object.fromEntries(await Promise.all(uploadedFiles.map(async (file, index) => {
-        const relativePath = normalizeArchivePath(String(relativePaths[index] || file.originalname))
-        return [relativePath, new Uint8Array(await fsp.readFile(file.path))]
-      })))
-      resultZipBytes = zipSync(archiveFiles)
-    }
-
-    const imported = buildImportedResult(archiveFiles)
-    const now = new Date().toISOString()
-    const sourceFilename = 'source.pdf'
-    const meta: DocumentMeta = {
-      id,
-      name: imported.sourceFilename,
-      size: imported.sourceBytes.byteLength,
-      mimeType: 'application/pdf',
-      sourceFilename,
-      createdAt: now,
-      updatedAt: now,
-      status: 'completed',
-      options: parseOptions({}),
-      pageCount: inferPageCount(imported.result),
-    }
-
-    await fsp.mkdir(directory, { recursive: true })
-    await writeBytesAtomic(path.join(directory, sourceFilename), imported.sourceBytes)
-    await writeBytesAtomic(resultZipPath(id), resultZipBytes)
-    await writeJsonAtomic(resultPath(id), imported.result)
-    await saveDocumentMeta(meta)
+    const archive = await buildUploadedImportArchive(uploadedFiles, request.body.paths)
+    const meta = await saveImportedArchive(archive)
     response.status(201).json(meta)
   } catch (error) {
-    await fsp.rm(directory, { recursive: true, force: true }).catch(() => undefined)
     next(error)
   } finally {
     await Promise.all(uploadedFiles.map((file) => fsp.rm(file.path, { force: true })))
+  }
+})
+
+app.post('/api/imports/path', async (request, response, next) => {
+  const localPath = typeof request.body.path === 'string' ? request.body.path : ''
+  if (!localPath.trim()) {
+    response.status(400).json({ error: '请输入结果目录或 ZIP 的本机路径' })
+    return
+  }
+
+  try {
+    const archive = await buildLocalImportArchive(localPath)
+    const meta = await saveImportedArchive(archive)
+    response.status(201).json(meta)
+  } catch (error) {
+    next(error)
   }
 })
 

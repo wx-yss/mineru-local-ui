@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import './App.css'
-import { deleteDocument, getDocument, getHealth, importResult, listDocuments, retryDocument, uploadDocument } from './api'
+import {
+  deleteDocument,
+  getDocument,
+  getHealth,
+  importResult,
+  importResultPath,
+  listDocuments,
+  retryDocument,
+  uploadDocument,
+} from './api'
 import { DocumentViewer } from './components/DocumentViewer'
 import { Sidebar } from './components/Sidebar'
 import { UploadView } from './components/UploadView'
@@ -127,6 +136,20 @@ function App() {
     }
   }
 
+  async function handleImportPath(path: string) {
+    setUploading(true)
+    setError(null)
+    try {
+      const document = await importResultPath(path)
+      await refreshDocuments()
+      setActiveId(document.id)
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : '路径导入失败')
+    } finally {
+      setUploading(false)
+    }
+  }
+
   function handleAddEndpoint(endpoint: MineruEndpoint) {
     setCustomEndpoints((current) => [
       ...current.filter((item) => item.url !== endpoint.url),
@@ -202,6 +225,7 @@ function App() {
           error={error}
           onUpload={handleUpload}
           onImport={handleImport}
+          onImportPath={handleImportPath}
         />
       )}
     </div>

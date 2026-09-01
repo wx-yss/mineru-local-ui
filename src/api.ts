@@ -47,6 +47,14 @@ export async function importResult(files: File[]) {
   return request<DocumentMeta>('/api/imports', { method: 'POST', body: form })
 }
 
+export function importResultPath(path: string) {
+  return request<DocumentMeta>('/api/imports/path', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  })
+}
+
 export function retryDocument(id: string, options: ParseOptions) {
   return request<DocumentMeta>(`/api/documents/${id}/retry`, {
     method: 'POST',
