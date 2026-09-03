@@ -1031,6 +1031,13 @@
   align-items: center;
 }
 
+.markdown-line-count {
+  margin-right: 4px;
+  color: #89909e;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .icon-button {
   display: inline-grid;
   width: 32px;
@@ -1253,12 +1260,25 @@
 }
 
 .structured-document {
+  --markdown-gutter-line-left: 40px;
+  position: relative;
   width: min(100%, 820px);
   padding: 24px clamp(24px, 4vw, 54px) 100px;
   margin: 0 auto;
   color: #292e36;
   font-size: 14px;
   line-height: 1.72;
+}
+
+.structured-document::before {
+  position: absolute;
+  top: 24px;
+  bottom: 100px;
+  left: var(--markdown-gutter-line-left);
+  width: 1px;
+  content: '';
+  background: #edf0f4;
+  pointer-events: none;
 }
 
 .markdown-block {
@@ -1269,6 +1289,23 @@
   border: 1px solid transparent;
   border-radius: 3px;
   transition: background 120ms ease, border-color 120ms ease;
+}
+
+.markdown-line-gutter {
+  position: absolute;
+  top: 9px;
+  left: -38px;
+  width: 32px;
+  box-sizing: border-box;
+  padding-right: 7px;
+  color: #9aa1ad;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
 }
 
 .markdown-block:hover {
@@ -1640,7 +1677,8 @@
   }
 
   .structured-document {
-    padding: 20px 16px 80px;
+    --markdown-gutter-line-left: 32px;
+    padding: 20px 16px 80px 46px;
   }
 }
 

@@ -1,9 +1,9 @@
 import DOMPurify from 'dompurify'
 import { Check, Clipboard, Download, FileArchive } from 'lucide-react'
 import katex from 'katex'
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 
-import { isPageChromeBlockType } from '../lib/mineru'
+import { buildMarkdownLineMap, getMarkdownLineCount, isPageChromeBlockType } from '../lib/mineru'
 import type {
   ContentV2Block,
   ContentV2BlockContent,
@@ -146,6 +146,11 @@ export const StructuredPane = forwardRef<LinkedPaneHandle, StructuredPaneProps>(
   const [quickMenuBlockId, setQuickMenuBlockId] = useState<string | null>(null)
   const [copiedBlockId, setCopiedBlockId] = useState<string | null>(null)
   const images = result.images ?? {}
+  const markdownLineMap = useMemo(
+    () => buildMarkdownLineMap(result.md_content, blocks),
+    [blocks, result.md_content],
+  )
+  const markdownLineCount = getMarkdownLineCount(result.md_content)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -242,6 +247,9 @@ export const StructuredPane = forwardRef<LinkedPaneHandle, StructuredPaneProps>(
           <button className={tab === 'json' ? 'active' : ''} onClick={() => setTab('json')}>JSON</button>
         </div>
         <div className="result-actions">
+          <span className="markdown-line-count">
+            {markdownLineCount > 0 ? `MD ${markdownLineCount.toLocaleString('zh-CN')} 行` : '无 Markdown'}
+          </span>
           <button className="icon-button" title="复制 content_list_v2" onClick={() => void copyContentListV2()}>
             {copied ? <Check size={17} /> : <Clipboard size={17} />}
           </button>
@@ -270,30 +278,43 @@ export const StructuredPane = forwardRef<LinkedPaneHandle, StructuredPaneProps>(
           <pre className="json-view">{formatJson(result.content_list_v2)}</pre>
         ) : blocks.length > 0 ? (
           <article className="structured-document">
-            {blocks.map(({ id, block, pageIndex }) => (
-              <section
-                key={id}
-                data-block-id={id}
-                data-block-type={block.type}
-                data-page-index={pageIndex}
-                className={`markdown-block block-${block.type} ${activeBlockId === id ? 'active' : ''}`}
-                onClick={() => handleBlockClick(id)}
-              >
-                <BlockBody block={block} images={images} />
-                {quickMenuBlockId === id && (
-                  <div className="block-quick-menu" onClick={(event) => event.stopPropagation()}>
-                    <button
-                      type="button"
-                      aria-label={copiedBlockId === id ? '已复制' : '复制原文并保留 LaTeX'}
-                      title={copiedBlockId === id ? '已复制' : '复制原文并保留 LaTeX'}
-                      onClick={() => void copyBlock(id, block)}
+            {blocks.map(({ id, block, pageIndex }) => {
+              const markdownLineRange = markdownLineMap.get(id)
+              return (
+                <section
+                  key={id}
+                  data-block-id={id}
+                  data-block-type={block.type}
+                  data-page-index={pageIndex}
+                  className={`markdown-block block-${block.type} ${activeBlockId === id ? 'active' : ''}`}
+                  onClick={() => handleBlockClick(id)}
+                >
+                  {markdownLineRange && (
+                    <span
+                      className="markdown-line-gutter"
+                      aria-label={`Markdown 第 ${markdownLineRange.start}${markdownLineRange.end !== markdownLineRange.start ? ` 到 ${markdownLineRange.end}` : ''} 行`}
+                      title={`Markdown 第 ${markdownLineRange.start}${markdownLineRange.end !== markdownLineRange.start ? `-${markdownLineRange.end}` : ''} 行`}
                     >
-                      {copiedBlockId === id ? <Check size={14} /> : <Clipboard size={14} />}
-                    </button>
-                  </div>
-                )}
-              </section>
-            ))}
+                      {markdownLineRange.start}
+                      {markdownLineRange.end !== markdownLineRange.start ? `-${markdownLineRange.end}` : ''}
+                    </span>
+                  )}
+                  <BlockBody block={block} images={images} />
+                  {quickMenuBlockId === id && (
+                    <div className="block-quick-menu" onClick={(event) => event.stopPropagation()}>
+                      <button
+                        type="button"
+                        aria-label={copiedBlockId === id ? '已复制' : '复制原文并保留 LaTeX'}
+                        title={copiedBlockId === id ? '已复制' : '复制原文并保留 LaTeX'}
+                        onClick={() => void copyBlock(id, block)}
+                      >
+                        {copiedBlockId === id ? <Check size={14} /> : <Clipboard size={14} />}
+                      </button>
+                    </div>
+                  )}
+                </section>
+              )
+            })}
           </article>
         ) : (
           <div className="viewer-error">content_list_v2 没有可渲染的内容</div>

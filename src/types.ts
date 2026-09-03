@@ -122,3 +122,8 @@ export interface LinkedBlock {
   pageSize: [number, number]
   block: ContentV2Block
 }
+
+export interface MarkdownLineRange {
+  start: number
+  end: number
+}
