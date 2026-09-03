@@ -1,5 +1,9 @@
 import type { ContentListV2, LinkedBlock, ParsedFileResult } from '../types'
 
+export function isPageChromeBlockType(type: string | undefined) {
+  return type === 'page_header' || type === 'page_footer' || type === 'page_number'
+}
+
 export function getParsedFile(result: { results?: Record<string, ParsedFileResult> } | null | undefined) {
   return result?.results ? Object.values(result.results)[0] : undefined
 }

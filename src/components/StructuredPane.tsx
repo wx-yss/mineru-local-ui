@@ -3,6 +3,7 @@ import { Check, Clipboard, Download, FileArchive } from 'lucide-react'
 import katex from 'katex'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 
+import { isPageChromeBlockType } from '../lib/mineru'
 import type {
   ContentV2Block,
   ContentV2BlockContent,
@@ -192,7 +193,8 @@ export const StructuredPane = forwardRef<LinkedPaneHandle, StructuredPaneProps>(
         },
         { id: null, distance: Number.POSITIVE_INFINITY },
       )
-      if (closest.id) {
+      const closestElement = elements.find((element) => element.dataset.blockId === closest.id)
+      if (closest.id && closestElement && !isPageChromeBlockType(closestElement.dataset.blockType)) {
         onVisibleBlock(closest.id)
       }
     })
@@ -272,6 +274,7 @@ export const StructuredPane = forwardRef<LinkedPaneHandle, StructuredPaneProps>(
               <section
                 key={id}
                 data-block-id={id}
+                data-block-type={block.type}
                 data-page-index={pageIndex}
                 className={`markdown-block block-${block.type} ${activeBlockId === id ? 'active' : ''}`}
                 onClick={() => handleBlockClick(id)}

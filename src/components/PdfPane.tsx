@@ -12,6 +12,7 @@ import * as pdfjs from 'pdfjs-dist'
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist'
 import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 
+import { isPageChromeBlockType } from '../lib/mineru'
 import type { LinkedBlock } from '../types'
 
 pdfjs.GlobalWorkerOptions.workerSrc = pdfWorker
@@ -140,8 +141,9 @@ function PageCanvas({
               key={id}
               type="button"
               data-block-id={id}
+              data-block-type={block.type}
               aria-label={`定位解析块 ${id}`}
-              className={`pdf-block-overlay ${activeBlockId === id ? 'active' : ''}`}
+              className={`pdf-block-overlay ${isPageChromeBlockType(block.type) ? 'page-chrome' : ''} ${activeBlockId === id ? 'active' : ''}`}
               style={{
                 left: `${(x0 / pageSize[0]) * 100}%`,
                 top: `${(y0 / pageSize[1]) * 100}%`,
@@ -244,7 +246,10 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
         },
         { id: null, distance: Number.POSITIVE_INFINITY },
       )
-      if (closestBlock.id) onVisibleBlock(closestBlock.id)
+      const closestOverlay = overlays.find((overlay) => overlay.dataset.blockId === closestBlock.id)
+      if (closestBlock.id && closestOverlay && !isPageChromeBlockType(closestOverlay.dataset.blockType)) {
+        onVisibleBlock(closestBlock.id)
+      }
     })
   }
 

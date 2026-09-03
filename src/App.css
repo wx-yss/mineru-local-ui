@@ -1085,6 +1085,22 @@
   box-shadow: 0 0 0 1px rgba(83, 109, 254, 0.24);
 }
 
+.pdf-block-overlay.page-chrome {
+  background: rgba(128, 136, 148, 0.035);
+  border-color: rgba(128, 136, 148, 0.52);
+}
+
+.pdf-block-overlay.page-chrome:hover {
+  background: rgba(128, 136, 148, 0.11);
+  border-color: rgba(105, 114, 127, 0.76);
+}
+
+.pdf-block-overlay.page-chrome.active {
+  background: rgba(128, 136, 148, 0.16);
+  border-color: #808894;
+  box-shadow: 0 0 0 1px rgba(128, 136, 148, 0.24);
+}
+
 .view-tabs {
   display: flex;
   gap: 2px;
