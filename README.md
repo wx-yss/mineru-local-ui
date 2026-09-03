@@ -44,7 +44,7 @@ npm run dev
 
 默认连接 `http://127.0.0.1:8000`。可通过 `MINERU_API_URL` 设置服务器默认地址，也可在左侧文件列表下方的“MinerU 服务”区域添加多个 IP/域名与端口并切换；页面配置和上次选择保存在浏览器中，每个任务会绑定提交时使用的地址。使用 `MINERU_STUDIO_DATA_DIR` 可指定解析记录目录。
 
-解析设置分为默认展开的“常用设置”和默认折叠的“其他设置”。浏览器会记住上一次选择，新解析继续使用该配置；首次使用时解析强度默认为 High。OCR 语言仅在 Pipeline 后端显示并提交，其他后端不需要填写。ZIP 与 Content list v2 是必选输出；Markdown 和 Image 默认开启并可调整；Middle JSON、Model output 和 Original file 默认关闭。解析范围固定为全部页面，完成后可下载原始结果 ZIP。
+解析设置分为默认展开的“常用设置”和默认折叠的“其他设置”。浏览器会记住上一次选择，新解析继续使用该配置。解析强度仅用于 Hybrid 后端，首次使用时默认为 High；VLM 后端不显示解析强度和 OCR 识别。OCR 语言仅在 Pipeline 后端显示并提交。ZIP 与 Content list v2 是必选输出；Markdown 和 Image 默认开启并可调整；Middle JSON、Model output 和 Original file 默认关闭。解析范围固定为全部页面，完成后可下载原始结果 ZIP。
 
 已有 MinerU 识别结果无需重新发起任务。在首页切换到“导入结果”，可选择结果 ZIP、选择该 ZIP 解压后的目录，或直接输入结果目录或 ZIP 的本机绝对路径。目录中需包含原始 PDF，以及标准命名的 `_content_list_v2.json`，或位于预处理产物目录中的 `content_list_v2.json`。同目录下的 Markdown（包括 `full.md`）和 `images/` 图片会一并导入，Middle JSON 和 Model output 可选。路径导入由应用服务读取文件，因此应填写应用服务所在电脑上的路径。导入完成后会直接进入 PDF 与 OCR 内容联动预览，MinerU API 离线时也可使用。
 

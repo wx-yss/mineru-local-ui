@@ -33,6 +33,18 @@ export function deleteDocument(id: string) {
   return request<void>(`/api/documents/${id}`, { method: 'DELETE' })
 }
 
+export function openDocumentFolder(id: string) {
+  return request<void>(`/api/documents/${id}/open-folder`, { method: 'POST' })
+}
+
+export function deleteDocuments(ids: string[]) {
+  return request<void>('/api/documents', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ids }),
+  })
+}
+
 export async function uploadDocument(file: File, options: ParseOptions) {
   const form = new FormData()
   form.append('file', file)

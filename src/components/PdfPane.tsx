@@ -5,6 +5,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
@@ -38,6 +39,9 @@ interface PageCanvasProps {
   activeBlockId: string | null
   onSelectBlock: (id: string) => void
   onError: (message: string) => void
+  estimatedWidth: number
+  estimatedHeight: number
+  onPageDimensions: (pageIndex: number, height: number) => void
 }
 
 interface LoadedPdf {
@@ -48,6 +52,136 @@ interface LoadedPdf {
 interface PdfError {
   sourceUrl: string
   message: string
+}
+
+interface PageRange {
+  start: number
+  end: number
+}
+
+interface PendingScroll {
+  requestId: number
+  pageNumber: number
+  blockId?: string
+}
+
+interface IdleDeadlineLike {
+  didTimeout: boolean
+  timeRemaining: () => number
+}
+
+type IdleCallback = (deadline: IdleDeadlineLike) => void
+
+interface IdleWindow {
+  requestIdleCallback?: (callback: IdleCallback, options?: { timeout: number }) => number
+  cancelIdleCallback?: (handle: number) => void
+}
+
+const immediatePageAhead = 1
+const idlePageAhead = 4
+const idleTimeout = 500
+const pageMargin = 22
+const defaultPageSize = { width: 595, height: 841 }
+
+class PageLayout {
+  private readonly estimatedExtent: number
+  private readonly pageCount: number
+  private readonly tree: number[]
+  private readonly measuredExtents = new Map<number, number>()
+
+  constructor(pageCount: number, estimatedExtent: number) {
+    this.pageCount = pageCount
+    this.estimatedExtent = estimatedExtent
+    this.tree = Array.from({ length: pageCount + 1 }, () => 0)
+  }
+
+  setPageHeight(pageIndex: number, height: number) {
+    if (pageIndex < 0 || pageIndex >= this.pageCount) return false
+    const nextExtent = height + pageMargin
+    const previousExtent = this.measuredExtents.get(pageIndex)
+    if (previousExtent === nextExtent) return false
+
+    const previousDelta = previousExtent === undefined ? 0 : previousExtent - this.estimatedExtent
+    const nextDelta = nextExtent - this.estimatedExtent
+    this.measuredExtents.set(pageIndex, nextExtent)
+    this.addDelta(pageIndex, nextDelta - previousDelta)
+    return true
+  }
+
+  offsetBefore(pageIndex: number) {
+    const bounded = Math.max(0, Math.min(pageIndex, this.pageCount))
+    return bounded * this.estimatedExtent + this.sumDeltas(bounded)
+  }
+
+  totalHeight() {
+    return this.offsetBefore(this.pageCount)
+  }
+
+  pageAtOffset(offset: number) {
+    if (this.pageCount <= 0) return 0
+    const boundedOffset = Math.max(0, Math.min(offset, Math.max(0, this.totalHeight() - 1)))
+    let lower = 0
+    let upper = this.pageCount
+    while (lower < upper) {
+      const middle = Math.floor((lower + upper) / 2)
+      if (this.offsetBefore(middle) <= boundedOffset) lower = middle + 1
+      else upper = middle
+    }
+    return Math.max(0, Math.min(lower - 1, this.pageCount - 1))
+  }
+
+  private addDelta(pageIndex: number, delta: number) {
+    for (let index = pageIndex + 1; index <= this.pageCount; index += index & -index) {
+      this.tree[index] += delta
+    }
+  }
+
+  private sumDeltas(pageCount: number) {
+    let total = 0
+    for (let index = pageCount; index > 0; index -= index & -index) {
+      total += this.tree[index]
+    }
+    return total
+  }
+}
+
+function scheduleIdle(callback: IdleCallback) {
+  const idleWindow = window as IdleWindow
+  if (idleWindow.requestIdleCallback) {
+    return idleWindow.requestIdleCallback(callback, { timeout: idleTimeout })
+  }
+  return window.setTimeout(() => callback({ didTimeout: true, timeRemaining: () => 0 }), idleTimeout)
+}
+
+function cancelIdle(handle: number) {
+  const idleWindow = window as IdleWindow
+  if (idleWindow.cancelIdleCallback) {
+    idleWindow.cancelIdleCallback(handle)
+    return
+  }
+  window.clearTimeout(handle)
+}
+
+function estimatePageDimensions(availableWidth: number, zoom: number) {
+  if (availableWidth <= 0) return defaultPageSize
+  const fitScale = Math.max(0.35, (availableWidth - 48) / defaultPageSize.width)
+  const scale = fitScale * zoom
+  return {
+    width: defaultPageSize.width * scale,
+    height: defaultPageSize.height * scale,
+  }
+}
+
+function clampPageRange(start: number, end: number, pageCount: number): PageRange {
+  if (pageCount <= 0) return { start: 0, end: -1 }
+  return {
+    start: Math.max(0, Math.min(start, pageCount - 1)),
+    end: Math.max(0, Math.min(end, pageCount - 1)),
+  }
+}
+
+function pageRangeForTarget(pageIndex: number, pageCount: number) {
+  return clampPageRange(pageIndex - immediatePageAhead, pageIndex + immediatePageAhead, pageCount)
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -63,24 +197,31 @@ function PageCanvas({
   activeBlockId,
   onSelectBlock,
   onError,
+  estimatedWidth,
+  estimatedHeight,
+  onPageDimensions,
 }: PageCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const renderTaskRef = useRef<{ cancel: () => void } | null>(null)
   const [page, setPage] = useState<PDFPageProxy | null>(null)
-  const [dimensions, setDimensions] = useState({ width: 595, height: 841 })
+  const [dimensions, setDimensions] = useState<{ width: number; height: number } | null>(null)
+  const displayDimensions = dimensions ?? { width: estimatedWidth, height: estimatedHeight }
 
   useEffect(() => {
     let cancelled = false
+    let loadedPage: PDFPageProxy | null = null
     void (async () => {
       try {
-        const loadedPage = await document.getPage(pageNumber)
+        loadedPage = await document.getPage(pageNumber)
         if (!cancelled) setPage(loadedPage)
+        else loadedPage.cleanup()
       } catch (loadError) {
         if (!cancelled) onError(getErrorMessage(loadError, `PDF 第 ${pageNumber} 页加载失败`))
       }
     })()
     return () => {
       cancelled = true
+      loadedPage?.cleanup()
     }
   }, [document, onError, pageNumber])
 
@@ -100,6 +241,7 @@ function PageCanvas({
     canvas.style.width = `${viewport.width}px`
     canvas.style.height = `${viewport.height}px`
     setDimensions({ width: viewport.width, height: viewport.height })
+    onPageDimensions(pageNumber - 1, viewport.height)
 
     let cancelled = false
     let renderTask
@@ -123,14 +265,16 @@ function PageCanvas({
     return () => {
       cancelled = true
       renderTask.cancel()
+      page.cleanup()
+      void renderTask.promise.finally(() => page.cleanup()).catch(() => undefined)
     }
-  }, [availableWidth, onError, page, pageNumber, zoom])
+  }, [availableWidth, onError, onPageDimensions, page, pageNumber, zoom])
 
   return (
     <div
       className="pdf-page"
       data-page-number={pageNumber}
-      style={{ width: dimensions.width, height: dimensions.height }}
+      style={{ width: displayDimensions.width, height: displayDimensions.height }}
     >
       <canvas ref={canvasRef} />
       <div className="pdf-overlay-layer">
@@ -165,21 +309,116 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
 ) {
   const containerRef = useRef<HTMLDivElement>(null)
   const scrollFrame = useRef<number | null>(null)
+  const idleRenderHandle = useRef<number | null>(null)
+  const idleRenderGeneration = useRef(0)
+  const renderRangeRef = useRef<PageRange>({ start: 0, end: -1 })
+  const pendingScrollId = useRef(0)
   const [loadedPdf, setLoadedPdf] = useState<LoadedPdf | null>(null)
   const [pdfError, setPdfError] = useState<PdfError | null>(null)
   const [width, setWidth] = useState(0)
   const [zoom, setZoom] = useState(1)
   const [currentPage, setCurrentPage] = useState(1)
+  const [renderRange, setRenderRange] = useState<PageRange>({ start: 0, end: -1 })
+  const [pendingScroll, setPendingScroll] = useState<PendingScroll | null>(null)
+  const [, setPageLayoutVersion] = useState(0)
   const reportError = useCallback((message: string) => {
     setPdfError({ sourceUrl, message })
   }, [sourceUrl])
+  const document = mimeType === 'application/pdf' && loadedPdf?.sourceUrl === sourceUrl
+    ? loadedPdf.document
+    : null
+  const error = pdfError?.sourceUrl === sourceUrl ? pdfError.message : null
+
+  const pageBlocks = useMemo(() => {
+    const grouped = new Map<number, LinkedBlock[]>()
+    blocks.forEach((block) => {
+      const current = grouped.get(block.pageIndex) ?? []
+      current.push(block)
+      grouped.set(block.pageIndex, current)
+    })
+    return grouped
+  }, [blocks])
+
+  const blockPageById = useMemo(() => new Map(blocks.map((block) => [block.id, block.pageIndex])), [blocks])
+  const estimatedDimensions = useMemo(() => estimatePageDimensions(width, zoom), [width, zoom])
+  const estimatedPageExtent = estimatedDimensions.height + pageMargin
+  const pageLayout = useMemo(
+    () => new PageLayout(document?.numPages ?? 0, estimatedPageExtent),
+    [document, estimatedPageExtent],
+  )
+
+  const onPageDimensions = useCallback((pageIndex: number, height: number) => {
+    if (!pageLayout.setPageHeight(pageIndex, height)) return
+    setPageLayoutVersion((version) => version + 1)
+  }, [pageLayout])
+
+  const pageRangeAtScroll = useCallback((ahead: number): PageRange => {
+    const container = containerRef.current
+    if (!container || !document) return { start: 0, end: -1 }
+    const firstVisiblePage = pageLayout.pageAtOffset(container.scrollTop)
+    const lastVisiblePage = pageLayout.pageAtOffset(container.scrollTop + container.clientHeight - 1)
+    return clampPageRange(firstVisiblePage - ahead, lastVisiblePage + ahead, document.numPages)
+  }, [document, pageLayout])
+
+  const setPageRenderRange = useCallback((nextRange: PageRange) => {
+    const currentRange = renderRangeRef.current
+    if (currentRange.start === nextRange.start && currentRange.end === nextRange.end) return
+    renderRangeRef.current = nextRange
+    setRenderRange(nextRange)
+  }, [])
+
+  const cancelIdleRender = useCallback(() => {
+    if (idleRenderHandle.current !== null) {
+      cancelIdle(idleRenderHandle.current)
+      idleRenderHandle.current = null
+    }
+    idleRenderGeneration.current += 1
+  }, [])
+
+  const updatePageRenderRange = useCallback((scheduleNearbyPages: boolean) => {
+    const immediateRange = pageRangeAtScroll(immediatePageAhead)
+    setPageRenderRange(immediateRange)
+    if (!scheduleNearbyPages) return
+
+    cancelIdleRender()
+    const idleRange = pageRangeAtScroll(idlePageAhead)
+    const generation = idleRenderGeneration.current
+    idleRenderHandle.current = scheduleIdle(() => {
+      if (generation !== idleRenderGeneration.current) return
+      idleRenderHandle.current = null
+      setPageRenderRange(idleRange)
+    })
+  }, [cancelIdleRender, pageRangeAtScroll, setPageRenderRange])
 
   useImperativeHandle(ref, () => ({
     scrollToBlock(id) {
-      const target = containerRef.current?.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(id)}"]`)
-      target?.scrollIntoView({ behavior: 'auto', block: 'center' })
+      const pageIndex = blockPageById.get(id)
+      if (pageIndex === undefined) return
+      setPageRenderRange(pageRangeForTarget(pageIndex, document?.numPages ?? 0))
+      setPendingScroll({ requestId: pendingScrollId.current += 1, pageNumber: pageIndex + 1, blockId: id })
     },
-  }))
+  }), [blockPageById, document, setPageRenderRange])
+
+  useEffect(() => {
+    if (!document || width <= 0) return
+    updatePageRenderRange(true)
+  }, [document, updatePageRenderRange, width, zoom])
+
+  useEffect(() => {
+    if (!pendingScroll || !document) return
+    const targetPageIndex = pendingScroll.pageNumber - 1
+    if (targetPageIndex < renderRange.start || targetPageIndex > renderRange.end) {
+      setPageRenderRange(pageRangeForTarget(targetPageIndex, document.numPages))
+      return
+    }
+    const selector = pendingScroll.blockId
+      ? `[data-block-id="${CSS.escape(pendingScroll.blockId)}"]`
+      : `[data-page-number="${pendingScroll.pageNumber}"]`
+    const target = containerRef.current?.querySelector<HTMLElement>(selector)
+    if (!target) return
+    setPendingScroll(null)
+    target.scrollIntoView({ behavior: 'auto', block: pendingScroll.blockId ? 'center' : 'start' })
+  }, [document, pendingScroll, renderRange, setPageRenderRange])
 
   useLayoutEffect(() => {
     if (!containerRef.current) return
@@ -209,18 +448,20 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
       })
     return () => {
       cancelled = true
+      cancelIdleRender()
       void loadingTask.destroy().catch(() => undefined)
     }
-  }, [mimeType, sourceUrl])
+  }, [cancelIdleRender, mimeType, sourceUrl])
 
-  const document = mimeType === 'application/pdf' && loadedPdf?.sourceUrl === sourceUrl
-    ? loadedPdf.document
-    : null
-  const error = pdfError?.sourceUrl === sourceUrl ? pdfError.message : null
+  useEffect(() => () => {
+    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current)
+    cancelIdleRender()
+  }, [cancelIdleRender])
 
   function inspectScroll() {
     const container = containerRef.current
     if (!container) return
+    updatePageRenderRange(true)
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current)
     scrollFrame.current = requestAnimationFrame(() => {
       const center = container.getBoundingClientRect().top + container.clientHeight / 2
@@ -255,16 +496,9 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
 
   function goToPage(pageNumber: number) {
     const bounded = Math.max(1, Math.min(document?.numPages || 1, pageNumber))
-    const page = containerRef.current?.querySelector<HTMLElement>(`[data-page-number="${bounded}"]`)
-    page?.scrollIntoView({ behavior: 'auto', block: 'start' })
+    setPageRenderRange(pageRangeForTarget(bounded - 1, document?.numPages ?? 0))
+    setPendingScroll({ requestId: pendingScrollId.current += 1, pageNumber: bounded })
   }
-
-  const pageBlocks = new Map<number, LinkedBlock[]>()
-  blocks.forEach((block) => {
-    const current = pageBlocks.get(block.pageIndex) ?? []
-    current.push(block)
-    pageBlocks.set(block.pageIndex, current)
-  })
 
   return (
     <section className="preview-pane pdf-pane">
@@ -298,19 +532,39 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
         ) : !document ? (
           <div className="viewer-loading">正在加载原文件...</div>
         ) : (
-          Array.from({ length: document.numPages }, (_, index) => (
-            <PageCanvas
-              key={index + 1}
-              document={document}
-              pageNumber={index + 1}
-              availableWidth={width}
-              zoom={zoom}
-              blocks={pageBlocks.get(index) ?? []}
-              activeBlockId={activeBlockId}
-              onSelectBlock={onVisibleBlock}
-              onError={reportError}
+          <>
+            <div
+              className="pdf-page-spacer"
+              style={{ height: pageLayout.offsetBefore(renderRange.start) }}
+              aria-hidden="true"
             />
-          ))
+            {Array.from({ length: Math.max(0, renderRange.end - renderRange.start + 1) }, (_, index) => {
+              const pageIndex = renderRange.start + index
+              return (
+                <PageCanvas
+                  key={pageIndex + 1}
+                  document={document}
+                  pageNumber={pageIndex + 1}
+                  availableWidth={width}
+                  zoom={zoom}
+                  blocks={pageBlocks.get(pageIndex) ?? []}
+                  activeBlockId={activeBlockId}
+                  onSelectBlock={onVisibleBlock}
+                  onError={reportError}
+                  estimatedWidth={estimatedDimensions.width}
+                  estimatedHeight={estimatedDimensions.height}
+                  onPageDimensions={onPageDimensions}
+                />
+              )
+            })}
+            <div
+              className="pdf-page-spacer"
+              style={{
+                height: Math.max(0, pageLayout.totalHeight() - pageLayout.offsetBefore(renderRange.end + 1)),
+              }}
+              aria-hidden="true"
+            />
+          </>
         )}
       </div>
     </section>

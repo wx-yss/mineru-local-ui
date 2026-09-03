@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
@@ -116,6 +117,23 @@ function isSafeId(id: string) {
   return /^[a-f0-9-]{36}$/.test(id)
 }
 
+function openFolderCommand() {
+  if (process.platform === 'darwin') return 'open'
+  if (process.platform === 'win32') return 'explorer'
+  return 'xdg-open'
+}
+
+function openFolder(directory: string) {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(openFolderCommand(), [directory], { detached: true, stdio: 'ignore' })
+    child.once('error', reject)
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
+  })
+}
+
 function decodeUploadFilename(filename: string) {
   const decoded = Buffer.from(filename, 'latin1').toString('utf8')
   return decoded.includes('\uFFFD') ? filename : decoded
@@ -179,21 +197,24 @@ function normalizeMineruApiUrl(value: unknown) {
 }
 
 function parseOptions(body: Record<string, unknown>): ParseOptions {
+  const backend = ['pipeline', 'vlm-engine', 'hybrid-engine'].includes(String(body.backend))
+    ? String(body.backend)
+    : 'hybrid-engine'
   const effort = body.effort === 'medium' ? 'medium' : 'high'
   const parseMethod = ['auto', 'txt', 'ocr'].includes(String(body.parseMethod))
     ? (String(body.parseMethod) as ParseOptions['parseMethod'])
     : 'ocr'
   return {
     mineruApiUrl: normalizeMineruApiUrl(body.mineruApiUrl),
-    backend: ['pipeline', 'vlm-engine', 'hybrid-engine'].includes(String(body.backend))
-      ? String(body.backend)
-      : 'hybrid-engine',
+    backend,
     effort,
     parseMethod,
     language: String(body.language || 'ch'),
     formulaEnable: normalizeBoolean(body.formulaEnable, true),
     tableEnable: normalizeBoolean(body.tableEnable, true),
-    imageAnalysis: effort === 'high' && normalizeBoolean(body.imageAnalysis, true),
+    imageAnalysis: backend !== 'pipeline'
+      && (backend === 'vlm-engine' || effort === 'high')
+      && normalizeBoolean(body.imageAnalysis, true),
     outputZip: true,
     outputMarkdown: normalizeBoolean(body.outputMarkdown, true),
     outputContentList: true,
@@ -488,8 +509,8 @@ async function submitDocument(meta: DocumentMeta) {
   form.append('files', new Blob([new Uint8Array(bytes)], { type: meta.mimeType }), meta.name)
   if (meta.options.backend === 'pipeline') form.append('lang_list', meta.options.language)
   form.append('backend', meta.options.backend)
-  form.append('effort', meta.options.effort)
-  form.append('parse_method', meta.options.parseMethod)
+  if (meta.options.backend === 'hybrid-engine') form.append('effort', meta.options.effort)
+  if (meta.options.backend !== 'vlm-engine') form.append('parse_method', meta.options.parseMethod)
   form.append('formula_enable', String(meta.options.formulaEnable))
   form.append('table_enable', String(meta.options.tableEnable))
   form.append('image_analysis', String(meta.options.imageAnalysis))
@@ -759,6 +780,19 @@ app.get('/api/documents/:id/download/:format', async (request, response, next) =
   }
 })
 
+app.post('/api/documents/:id/open-folder', async (request, response, next) => {
+  try {
+    if (!isSafeId(request.params.id)) throw new Error('无效文档编号')
+    const directory = documentDirectory(request.params.id)
+    const stats = await fsp.stat(directory)
+    if (!stats.isDirectory()) throw new Error('文档所在目录不存在')
+    await openFolder(directory)
+    response.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
 app.delete('/api/documents/:id', async (request, response, next) => {
   try {
     if (!isSafeId(request.params.id)) throw new Error('无效文档编号')
@@ -766,6 +800,25 @@ app.delete('/api/documents/:id', async (request, response, next) => {
     if (timer) clearTimeout(timer)
     pollingTimers.delete(request.params.id)
     await fsp.rm(documentDirectory(request.params.id), { recursive: true, force: true })
+    response.status(204).end()
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.delete('/api/documents', async (request, response, next) => {
+  try {
+    const ids = request.body?.ids
+    if (!Array.isArray(ids) || ids.length === 0 || ids.length > 2000 || !ids.every((id) => typeof id === 'string' && isSafeId(id))) {
+      throw new Error('无效文档编号列表')
+    }
+
+    await Promise.all(ids.map(async (id: string) => {
+      const timer = pollingTimers.get(id)
+      if (timer) clearTimeout(timer)
+      pollingTimers.delete(id)
+      await fsp.rm(documentDirectory(id), { recursive: true, force: true })
+    }))
     response.status(204).end()
   } catch (error) {
     next(error)

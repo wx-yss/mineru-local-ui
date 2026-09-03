@@ -114,6 +114,9 @@ export function UploadView({
     ? importFiles[0].name
     : `${importFiles[0]?.webkitRelativePath.split('/')[0] || '结果目录'}（${importFiles.length} 个文件）`
   const importSize = importFiles.reduce((total, current) => total + current.size, 0)
+  const supportsEffort = options.backend === 'hybrid-engine'
+  const supportsParseMethod = options.backend !== 'vlm-engine'
+  const supportsImageAnalysis = options.backend === 'vlm-engine' || options.effort === 'high'
 
   return (
     <main className="upload-view">
@@ -294,7 +297,11 @@ export function UploadView({
                   <span>解析后端</span>
                   <select
                     value={options.backend}
-                    onChange={(event) => setOptions((current) => ({ ...current, backend: event.target.value }))}
+                    onChange={(event) => setOptions((current) => ({
+                      ...current,
+                      backend: event.target.value,
+                      imageAnalysis: event.target.value === 'pipeline' ? false : current.imageAnalysis,
+                    }))}
                   >
                     <option value="hybrid-engine">Hybrid 本地</option>
                     <option value="vlm-engine">VLM 本地</option>
@@ -302,38 +309,42 @@ export function UploadView({
                   </select>
                 </label>
 
-                <div className="setting-row">
-                  <span>解析强度</span>
-                  <div className="segmented-control">
-                    {(['medium', 'high'] as const).map((effort) => (
-                      <button
-                        key={effort}
-                        className={options.effort === effort ? 'active' : ''}
-                        onClick={() =>
-                          setOptions((current) => ({
-                            ...current,
-                            effort,
-                            imageAnalysis: effort === 'high' ? current.imageAnalysis : false,
-                          }))
-                        }
-                      >
-                        {effort === 'medium' ? 'Medium' : 'High'}
-                      </button>
-                    ))}
+                {supportsEffort && (
+                  <div className="setting-row">
+                    <span>解析强度</span>
+                    <div className="segmented-control">
+                      {(['medium', 'high'] as const).map((effort) => (
+                        <button
+                          key={effort}
+                          className={options.effort === effort ? 'active' : ''}
+                          onClick={() =>
+                            setOptions((current) => ({
+                              ...current,
+                              effort,
+                              imageAnalysis: effort === 'high' ? current.imageAnalysis : false,
+                            }))
+                          }
+                        >
+                          {effort === 'medium' ? 'Medium' : 'High'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                <label className="setting-row">
-                  <span>OCR 识别</span>
-                  <input
-                    className="switch"
-                    type="checkbox"
-                    checked={options.parseMethod === 'ocr'}
-                    onChange={(event) =>
-                      setOptions((current) => ({ ...current, parseMethod: event.target.checked ? 'ocr' : 'auto' }))
-                    }
-                  />
-                </label>
+                {supportsParseMethod && (
+                  <label className="setting-row">
+                    <span>OCR 识别</span>
+                    <input
+                      className="switch"
+                      type="checkbox"
+                      checked={options.parseMethod === 'ocr'}
+                      onChange={(event) =>
+                        setOptions((current) => ({ ...current, parseMethod: event.target.checked ? 'ocr' : 'auto' }))
+                      }
+                    />
+                  </label>
+                )}
               </div>
             )}
           </section>
@@ -365,12 +376,12 @@ export function UploadView({
                   />
                 </label>
 
-                <label className={`setting-row ${options.effort !== 'high' ? 'disabled' : ''}`}>
+                <label className={`setting-row ${supportsImageAnalysis ? '' : 'disabled'}`}>
                   <span>图像分析</span>
                   <input
                     className="switch"
                     type="checkbox"
-                    disabled={options.effort !== 'high'}
+                    disabled={!supportsImageAnalysis}
                     checked={options.imageAnalysis}
                     onChange={(event) => setOptions((current) => ({ ...current, imageAnalysis: event.target.checked }))}
                   />

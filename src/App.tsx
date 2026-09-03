@@ -3,11 +3,13 @@ import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import {
   deleteDocument,
+  deleteDocuments,
   getDocument,
   getHealth,
   importResult,
   importResultPath,
   listDocuments,
+  openDocumentFolder,
   retryDocument,
   uploadDocument,
 } from './api'
@@ -177,6 +179,35 @@ function App() {
     }
   }
 
+  async function handleOpenFolder(document: DocumentMeta) {
+    setError(null)
+    try {
+      await openDocumentFolder(document.id)
+    } catch (openFolderError) {
+      setError(openFolderError instanceof Error ? openFolderError.message : '打开文件所在目录失败')
+    }
+  }
+
+  async function handleDeleteMany(selectedDocuments: DocumentMeta[]) {
+    const documentNames = selectedDocuments.length === 1
+      ? `“${selectedDocuments[0].name}”`
+      : `${selectedDocuments.length} 个文件`
+    if (!window.confirm(`删除${documentNames}及其本地解析结果？`)) return false
+    setError(null)
+    try {
+      await deleteDocuments(selectedDocuments.map((document) => document.id))
+      if (activeId && selectedDocuments.some((document) => document.id === activeId)) {
+        setActiveId(null)
+        setActiveDocument(null)
+      }
+      await refreshDocuments()
+      return true
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : '批量删除失败')
+      return false
+    }
+  }
+
   async function handleRetry() {
     if (!activeDocument) return
     setError(null)
@@ -208,6 +239,8 @@ function App() {
           setError(null)
         }}
         onDelete={(document) => void handleDelete(document)}
+        onOpenFolder={(document) => void handleOpenFolder(document)}
+        onDeleteMany={handleDeleteMany}
         onEndpointChange={setSelectedEndpointId}
         onEndpointAdd={handleAddEndpoint}
         onEndpointDelete={handleDeleteEndpoint}
