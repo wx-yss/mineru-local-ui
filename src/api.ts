@@ -1,4 +1,4 @@
-import type { DocumentDetail, DocumentMeta, HealthState, ParseOptions } from './types'
+import type { DocumentDetail, DocumentMeta, HealthState, MineruEndpoint, ParseOptions } from './types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init)
@@ -27,6 +27,18 @@ export function getDocument(id: string) {
 export function getHealth(mineruApiUrl = '') {
   const query = mineruApiUrl ? `?mineruApiUrl=${encodeURIComponent(mineruApiUrl)}` : ''
   return request<HealthState>(`/api/health${query}`)
+}
+
+export function listMineruServices() {
+  return request<MineruEndpoint[]>('/api/mineru-services')
+}
+
+export function saveMineruServices(services: MineruEndpoint[]) {
+  return request<MineruEndpoint[]>('/api/mineru-services', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(services),
+  })
 }
 
 export function deleteDocument(id: string) {

@@ -8,18 +8,20 @@ import {
   getHealth,
   importResult,
   importResultPath,
+  listMineruServices,
   listDocuments,
   openDocumentFolder,
   retryDocument,
+  saveMineruServices,
   uploadDocument,
 } from './api'
 import { DocumentViewer } from './components/DocumentViewer'
 import { Sidebar } from './components/Sidebar'
 import { UploadView } from './components/UploadView'
 import {
+  clearLegacyMineruEndpoints,
   loadMineruEndpoints,
   loadSelectedEndpointId,
-  saveMineruEndpoints,
   saveSelectedEndpointId,
   serverDefaultEndpoint,
 } from './lib/mineruEndpoints'
@@ -69,6 +71,31 @@ function App() {
   }, [])
 
   useEffect(() => {
+    let cancelled = false
+    const legacyEndpoints = loadMineruEndpoints()
+    void (async () => {
+      try {
+        const savedEndpoints = await listMineruServices()
+        const mergedEndpoints = [
+          ...savedEndpoints,
+          ...legacyEndpoints.filter((legacy) => !savedEndpoints.some((saved) => saved.url === legacy.url)),
+        ]
+        const persistedEndpoints = mergedEndpoints.length === savedEndpoints.length
+          ? savedEndpoints
+          : await saveMineruServices(mergedEndpoints)
+        if (cancelled) return
+        setCustomEndpoints(persistedEndpoints)
+        clearLegacyMineruEndpoints()
+      } catch (loadError) {
+        if (!cancelled) setError(loadError instanceof Error ? loadError.message : '无法读取 MinerU 服务配置')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     const initialTimer = window.setTimeout(() => {
       void refreshDocuments()
       void refreshHealth()
@@ -82,12 +109,11 @@ function App() {
 
   useEffect(() => {
     try {
-      saveMineruEndpoints(customEndpoints)
       saveSelectedEndpointId(selectedEndpoint.id)
     } catch {
       // 浏览器禁用本地存储时仍允许当前页面使用服务地址。
     }
-  }, [customEndpoints, selectedEndpoint.id])
+  }, [selectedEndpoint.id])
 
   useEffect(() => {
     if (!activeId) return
@@ -152,17 +178,33 @@ function App() {
     }
   }
 
-  function handleAddEndpoint(endpoint: MineruEndpoint) {
-    setCustomEndpoints((current) => [
-      ...current.filter((item) => item.url !== endpoint.url),
+  async function handleAddEndpoint(endpoint: MineruEndpoint) {
+    const nextEndpoints = [
+      ...customEndpoints.filter((item) => item.url !== endpoint.url),
       endpoint,
-    ])
-    setSelectedEndpointId(endpoint.id)
+    ]
+    try {
+      setError(null)
+      setCustomEndpoints(await saveMineruServices(nextEndpoints))
+      setSelectedEndpointId(endpoint.id)
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : '保存 MinerU 服务失败'
+      setError(message)
+      throw saveError
+    }
   }
 
-  function handleDeleteEndpoint(id: string) {
-    setCustomEndpoints((current) => current.filter((endpoint) => endpoint.id !== id))
-    if (selectedEndpointId === id) setSelectedEndpointId(serverDefaultEndpoint.id)
+  async function handleDeleteEndpoint(id: string) {
+    const nextEndpoints = customEndpoints.filter((endpoint) => endpoint.id !== id)
+    try {
+      setError(null)
+      setCustomEndpoints(await saveMineruServices(nextEndpoints))
+      if (selectedEndpointId === id) setSelectedEndpointId(serverDefaultEndpoint.id)
+    } catch (saveError) {
+      const message = saveError instanceof Error ? saveError.message : '删除 MinerU 服务失败'
+      setError(message)
+      throw saveError
+    }
   }
 
   async function handleDelete(document: DocumentMeta) {

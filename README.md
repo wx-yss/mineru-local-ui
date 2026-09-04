@@ -42,7 +42,9 @@ npm run dev:full
 npm run dev
 ```
 
-默认连接 `http://127.0.0.1:8000`。可通过 `MINERU_API_URL` 设置服务器默认地址，也可在左侧文件列表下方的“MinerU 服务”区域添加多个 IP/域名与端口并切换；页面配置和上次选择保存在浏览器中，每个任务会绑定提交时使用的地址。使用 `MINERU_STUDIO_DATA_DIR` 可指定解析记录目录。
+默认连接 `http://127.0.0.1:8000`。可通过 `MINERU_API_URL` 设置服务器默认地址，也可在左侧文件列表下方的“MinerU 服务”区域添加多个 IP/域名与端口并切换；当前选择保存在浏览器中，每个任务会绑定提交时使用的地址。使用 `MINERU_STUDIO_DATA_DIR` 可指定解析记录目录。
+
+“MinerU 服务”区域新增或删除的服务会写入仓库中的 `config/mineru-services.json`，可随 Git 提交并共享给其他使用者。旧版本保存在浏览器中的服务会在首次启动时迁移到该文件。服务配置仅用于保存名称和 URL，不应写入账号、密码或 Token。
 
 解析设置分为默认展开的“常用设置”和默认折叠的“其他设置”。浏览器会记住上一次选择，新解析继续使用该配置。解析强度仅用于 Hybrid 后端，首次使用时默认为 High；VLM 后端不显示解析强度和 OCR 识别。OCR 语言仅在 Pipeline 后端显示并提交。ZIP 与 Content list v2 是必选输出；Markdown 和 Image 默认开启并可调整；Middle JSON、Model output 和 Original file 默认关闭。解析范围固定为全部页面，完成后可下载原始结果 ZIP。
 

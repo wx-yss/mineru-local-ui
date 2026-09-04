@@ -19,8 +19,8 @@ interface SidebarProps {
   onOpenFolder: (document: DocumentMeta) => void
   onDeleteMany: (documents: DocumentMeta[]) => Promise<boolean>
   onEndpointChange: (id: string) => void
-  onEndpointAdd: (endpoint: MineruEndpoint) => void
-  onEndpointDelete: (id: string) => void
+  onEndpointAdd: (endpoint: MineruEndpoint) => Promise<void>
+  onEndpointDelete: (id: string) => Promise<void>
 }
 
 export function Sidebar({
@@ -44,6 +44,7 @@ export function Sidebar({
   const [endpointHost, setEndpointHost] = useState('')
   const [endpointPort, setEndpointPort] = useState('8000')
   const [endpointError, setEndpointError] = useState<string | null>(null)
+  const [savingEndpoint, setSavingEndpoint] = useState(false)
   const [selectionMode, setSelectionMode] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState(false)
@@ -83,15 +84,32 @@ export function Sidebar({
     }
   }
 
-  function addEndpoint() {
+  async function addEndpoint() {
+    if (savingEndpoint) return
     try {
       const endpoint = createMineruEndpoint(endpointName, endpointHost, endpointPort)
-      onEndpointAdd(endpoint)
+      setSavingEndpoint(true)
+      await onEndpointAdd(endpoint)
       setEndpointName('')
       setEndpointHost('')
       setEndpointError(null)
     } catch (addError) {
       setEndpointError(addError instanceof Error ? addError.message : 'MinerU 地址无效')
+    } finally {
+      setSavingEndpoint(false)
+    }
+  }
+
+  async function deleteEndpoint(id: string) {
+    if (savingEndpoint) return
+    setSavingEndpoint(true)
+    setEndpointError(null)
+    try {
+      await onEndpointDelete(id)
+    } catch (deleteError) {
+      setEndpointError(deleteError instanceof Error ? deleteError.message : '删除 MinerU 服务失败')
+    } finally {
+      setSavingEndpoint(false)
     }
   }
 
@@ -276,8 +294,8 @@ export function Sidebar({
                 onChange={(event) => setEndpointPort(event.target.value)}
               />
             </div>
-            <button className="endpoint-add-button" type="button" onClick={addEndpoint}>
-              <Plus size={14} />添加服务
+            <button className="endpoint-add-button" type="button" disabled={savingEndpoint} onClick={() => void addEndpoint()}>
+              <Plus size={14} />{savingEndpoint ? '保存中' : '添加服务'}
             </button>
             {endpointError && <div className="endpoint-error">{endpointError}</div>}
 
@@ -293,7 +311,8 @@ export function Sidebar({
                       className="endpoint-delete-button"
                       type="button"
                       title={`删除 ${endpoint.name}`}
-                      onClick={() => onEndpointDelete(endpoint.id)}
+                      disabled={savingEndpoint}
+                      onClick={() => void deleteEndpoint(endpoint.id)}
                     >
                       <Trash2 size={14} />
                     </button>

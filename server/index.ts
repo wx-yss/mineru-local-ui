@@ -50,10 +50,17 @@ interface DocumentMeta {
   pageCount?: number
 }
 
+interface MineruService {
+  id: string
+  name: string
+  url: string
+}
+
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dataRoot = path.resolve(process.env.MINERU_STUDIO_DATA_DIR || path.join(projectRoot, 'data'))
 const uploadRoot = path.join(dataRoot, '.uploads')
 const distRoot = path.join(projectRoot, 'dist')
+const mineruServicesConfigPath = path.join(projectRoot, 'config', 'mineru-services.json')
 const defaultMineruApiUrl = (process.env.MINERU_API_URL || 'http://127.0.0.1:8000').replace(/\/$/, '')
 const port = Number(process.env.PORT || 8787)
 const pollingTimers = new Map<string, NodeJS.Timeout>()
@@ -149,6 +156,38 @@ async function writeBytesAtomic(filePath: string, value: Uint8Array) {
   const temporaryPath = `${filePath}.${crypto.randomUUID()}.tmp`
   await fsp.writeFile(temporaryPath, value)
   await fsp.rename(temporaryPath, filePath)
+}
+
+function parseMineruServices(value: unknown): MineruService[] {
+  if (!value || typeof value !== 'object') throw new Error('MinerU 服务配置格式错误')
+  const services = (value as { services?: unknown }).services
+  if (!Array.isArray(services)) throw new Error('MinerU 服务配置缺少 services 数组')
+
+  const ids = new Set<string>()
+  const urls = new Set<string>()
+  return services.map((value) => {
+    if (!value || typeof value !== 'object') throw new Error('MinerU 服务配置项格式错误')
+    const service = value as Partial<MineruService>
+    if (typeof service.id !== 'string' || !service.id.trim()) throw new Error('MinerU 服务编号不能为空')
+    if (typeof service.name !== 'string' || !service.name.trim()) throw new Error('MinerU 服务名称不能为空')
+    if (typeof service.url !== 'string') throw new Error('MinerU 服务地址不能为空')
+
+    const url = normalizeMineruApiUrl(service.url)
+    if (ids.has(service.id)) throw new Error(`MinerU 服务编号重复：${service.id}`)
+    if (urls.has(url)) throw new Error(`MinerU 服务地址重复：${url}`)
+    ids.add(service.id)
+    urls.add(url)
+    return { id: service.id, name: service.name.trim(), url }
+  })
+}
+
+async function readMineruServices() {
+  const content = await fsp.readFile(mineruServicesConfigPath, 'utf8')
+  return parseMineruServices(JSON.parse(content) as unknown)
+}
+
+async function saveMineruServices(services: MineruService[]) {
+  await writeJsonAtomic(mineruServicesConfigPath, { services })
 }
 
 async function readDocumentMeta(id: string): Promise<DocumentMeta> {
@@ -604,6 +643,24 @@ app.get('/api/health', async (request, response) => {
       url: targetUrl,
       error: error instanceof Error ? error.message : 'MinerU API 不可用',
     })
+  }
+})
+
+app.get('/api/mineru-services', async (_request, response, next) => {
+  try {
+    response.json(await readMineruServices())
+  } catch (error) {
+    next(error)
+  }
+})
+
+app.put('/api/mineru-services', async (request, response, next) => {
+  try {
+    const services = parseMineruServices({ services: request.body })
+    await saveMineruServices(services)
+    response.json(services)
+  } catch (error) {
+    next(error)
   }
 })
 

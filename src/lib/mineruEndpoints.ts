@@ -61,8 +61,8 @@ export function loadMineruEndpoints(): MineruEndpoint[] {
   }
 }
 
-export function saveMineruEndpoints(endpoints: MineruEndpoint[]) {
-  localStorage.setItem(endpointsStorageKey, JSON.stringify(endpoints))
+export function clearLegacyMineruEndpoints() {
+  localStorage.removeItem(endpointsStorageKey)
 }
 
 export function loadSelectedEndpointId() {
