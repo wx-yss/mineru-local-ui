@@ -188,6 +188,12 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
 }
 
+function isVisibleInContainer(element: HTMLElement, container: HTMLElement) {
+  const elementRect = element.getBoundingClientRect()
+  const containerRect = container.getBoundingClientRect()
+  return elementRect.bottom > containerRect.top && elementRect.top < containerRect.bottom
+}
+
 function PageCanvas({
   document,
   pageNumber,
@@ -394,6 +400,9 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
     scrollToBlock(id) {
       const pageIndex = blockPageById.get(id)
       if (pageIndex === undefined) return
+      const container = containerRef.current
+      const target = container?.querySelector<HTMLElement>(`[data-block-id="${CSS.escape(id)}"]`)
+      if (container && target && isVisibleInContainer(target, container)) return
       setPageRenderRange(pageRangeForTarget(pageIndex, document?.numPages ?? 0))
       setPendingScroll({ requestId: pendingScrollId.current += 1, pageNumber: pageIndex + 1, blockId: id })
     },
@@ -411,13 +420,11 @@ export const PdfPane = forwardRef<LinkedPaneHandle, PdfPaneProps>(function PdfPa
       setPageRenderRange(pageRangeForTarget(targetPageIndex, document.numPages))
       return
     }
-    const selector = pendingScroll.blockId
-      ? `[data-block-id="${CSS.escape(pendingScroll.blockId)}"]`
-      : `[data-page-number="${pendingScroll.pageNumber}"]`
+    const selector = `[data-page-number="${pendingScroll.pageNumber}"]`
     const target = containerRef.current?.querySelector<HTMLElement>(selector)
     if (!target) return
     setPendingScroll(null)
-    target.scrollIntoView({ behavior: 'auto', block: pendingScroll.blockId ? 'center' : 'start' })
+    target.scrollIntoView({ behavior: 'auto', block: 'start' })
   }, [document, pendingScroll, renderRange, setPageRenderRange])
 
   useLayoutEffect(() => {
